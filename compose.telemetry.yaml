@@ -15,7 +15,7 @@ services:
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
     restart: unless-stopped
     ports:
-      - "127.0.0.1:16686:16686"
-      - "127.0.0.1:4318:4318"
-      - "127.0.0.1:4317:4317"
+      - "${JAEGER_BIND_ADDRESS:-127.0.0.1}:16686:16686"
+      - "${JAEGER_BIND_ADDRESS:-127.0.0.1}:4318:4318"
+      - "${JAEGER_BIND_ADDRESS:-127.0.0.1}:4317:4317"
     networks: [internal]
