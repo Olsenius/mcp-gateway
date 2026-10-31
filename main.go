@@ -227,7 +227,7 @@ func (g *gateway) routes() http.Handler {
 
 	// MCP proxy: /<name>/mcp
 	mux.HandleFunc("/{name}/mcp", g.handleMCP)
-	return securityHeaders(mux)
+	return g.accessLog(securityHeaders(mux))
 }
 
 func securityHeaders(next http.Handler) http.Handler {
