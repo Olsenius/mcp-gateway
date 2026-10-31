@@ -165,7 +165,7 @@ When using Compose, add any extra OTEL variables to the gateway's `environment`.
 ### Jaeger test receiver
 
 ```sh
-docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway jaeger
+docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway bibliofil jaeger
 ```
 
 The override configures the gateway to export to `http://jaeger:4318` at info
@@ -182,7 +182,9 @@ Alternatively, forward the loopback ports from a remote VM to your machine:
 ssh -N -L 16686:127.0.0.1:16686 -L 4318:127.0.0.1:4318 -L 4317:127.0.0.1:4317 ubuntu@vigilo-mcp
 ```
 
-Open <http://localhost:16686> and select service `mcp-gateway`. Other applications
+Open <http://localhost:16686> and select service `mcp-gateway` or `bibliofil-mcp`.
+Bibliofil continues the gateway trace and adds spans for tools and library HTTP
+requests, so both services appear in the same trace. Other applications
 can send OTLP/HTTP traces to `http://localhost:4318` through the tunnel. Jaeger
 uses temporary in-memory storage: traces disappear when its container restarts.
 See the [Jaeger getting started guide](https://www.jaegertracing.io/docs/2.22/getting-started/).

@@ -1,10 +1,21 @@
 # Add to the base Compose file for a temporary tracing environment:
-# docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway jaeger
+# docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway bibliofil jaeger
 services:
   gateway:
     environment:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       OTEL_SERVICE_NAME: mcp-gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-always_on}
+    depends_on:
+      jaeger:
+        condition: service_started
+
+  bibliofil:
+    environment:
+      LOG_LEVEL: ${BIBLIOFIL_LOG_LEVEL:-info}
+      OTEL_SERVICE_NAME: bibliofil-mcp
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
       OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-always_on}
