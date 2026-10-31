@@ -23,10 +23,10 @@ and Tailscale Funnel.
 ```sh
 cp .env.example .env      # fill in PUBLIC_URL, BIBLIOFIL_TOKEN, TS_AUTHKEY
 docker compose up -d
-docker compose logs gateway   # shows a one-time setup code
+docker compose logs gateway   # shows the generated admin password
 ```
 
-Open `https://<your-host>/admin`, enter the setup code and choose an admin password.
+Open `https://<your-host>/admin` and log in with the admin password.
 Then open the server's **Settings and test** page, fill in the settings, save, and press **Test**.
 
 ## Connect an app
@@ -54,8 +54,8 @@ The admin page lists connected apps, and you can log out one or all of them.
 | `UPSTREAM_TOKEN` | – | Shared secret the gateway sends to the MCP servers as `Authorization: Bearer` |
 | `UPSTREAM_TOKEN_<NAME>` | – | Per-server token, overrides `UPSTREAM_TOKEN` (name upper-cased, `-` → `_`) |
 | `PUBLIC_URL` | guessed | The public https URL, e.g. `https://mcp.example.ts.net`. Set it. |
-| `ADMIN_PASSWORD` | – | Admin password. If unset, you choose one on first visit with a setup code from the log |
-| `DATA_DIR` | `/data` | Where clients, refresh tokens and the password hash are stored |
+| `ADMIN_PASSWORD` | generated | Admin password, at least 40 characters, or the gateway refuses to start. If unset, a random 48-character password is generated on first start, stored in `DATA_DIR/admin-password` and printed in the log at every start |
+| `DATA_DIR` | `/data` | Where clients, refresh tokens and the generated admin password are stored |
 | `ACCESS_TOKEN_TTL` | `1h` | Lifetime of OAuth access tokens |
 | `REFRESH_TOKEN_TTL` | `720h` | Lifetime of refresh tokens (rotated on every use) |
 | `PORT` | `8080` | |
@@ -116,9 +116,12 @@ See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configap
   protected resource metadata (RFC 9728) and resource indicators (RFC 8707). Tokens are bound to one MCP server.
 - Every new app must be approved with the admin password on a consent page that shows where it will be sent.
 - Failed logins are rate limited (5 per IP and 30 in total per 15 minutes).
-- Tokens and secrets are stored only as SHA-256 hashes; the admin password as PBKDF2-SHA256.
+- Tokens and client secrets are stored only as SHA-256 hashes.
+- The admin password has at least 40 characters. To change a generated one, delete `DATA_DIR/admin-password`
+  and restart, or set `ADMIN_PASSWORD`.
 - The gateway replaces the client's token with the upstream token, so MCP servers never see OAuth tokens.
-- Anyone who can reach the gateway can try to log in. Use a long password.
+- Anyone who can reach the gateway can try to log in, which is why short passwords are refused.
+- The generated password is printed in the container log. Anyone who can read the log can log in.
 
 ## Development
 

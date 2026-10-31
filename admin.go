@@ -57,10 +57,6 @@ func (g *gateway) requireAdmin(w http.ResponseWriter, r *http.Request) *session 
 // ---------- login and first setup ----------
 
 func (g *gateway) handleAdmin(w http.ResponseWriter, r *http.Request) {
-	if !g.hasAdmin() {
-		g.render(w, "setup", page{Title: "First-time setup"})
-		return
-	}
 	s := g.currentSession(r)
 	if s == nil {
 		g.renderLogin(w, r, "")
@@ -79,47 +75,6 @@ func (g *gateway) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
 }
 
-func (g *gateway) handleFirstSetup(w http.ResponseWriter, r *http.Request) {
-	r.ParseForm()
-	if g.hasAdmin() {
-		http.Redirect(w, r, "/admin", http.StatusSeeOther)
-		return
-	}
-	ip := clientIP(r)
-	if g.limiter.blocked(ip) {
-		g.render(w, "setup", page{Title: "First-time setup", Error: "Too many failed attempts. Wait 15 minutes."})
-		return
-	}
-	if g.setupCode == "" || !constEq(strings.TrimSpace(r.PostFormValue("code")), g.setupCode) {
-		g.limiter.fail(ip)
-		g.render(w, "setup", page{Title: "First-time setup", Error: "Wrong setup code. You find it in the gateway log."})
-		return
-	}
-	pw := r.PostFormValue("password")
-	if msg := weakPassword(pw, r.PostFormValue("password2")); msg != "" {
-		g.render(w, "setup", page{Title: "First-time setup", Error: msg})
-		return
-	}
-	if err := g.store.update(func(p *persisted) { p.AdminHash = hashPassword(pw) }); err != nil {
-		g.render(w, "setup", page{Title: "First-time setup", Error: err.Error()})
-		return
-	}
-	g.setupCode = ""
-	g.log.Info("admin password set")
-	g.startSession(w, r)
-	http.Redirect(w, r, "/admin", http.StatusSeeOther)
-}
-
-func weakPassword(pw, again string) string {
-	switch {
-	case pw != again:
-		return "The passwords do not match."
-	case len([]rune(pw)) < 12:
-		return "The password needs at least 12 characters. It protects your accounts from the whole internet."
-	}
-	return ""
-}
-
 func (g *gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	if g.requireAdmin(w, r) == nil {
 		return
@@ -131,31 +86,6 @@ func (g *gateway) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	http.SetCookie(w, &http.Cookie{Name: sessionCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: g.secureCookies(r)})
 	http.Redirect(w, r, "/admin", http.StatusSeeOther)
-}
-
-func (g *gateway) handleChangePassword(w http.ResponseWriter, r *http.Request) {
-	s := g.requireAdmin(w, r)
-	if s == nil {
-		return
-	}
-	if g.adminEnv != "" {
-		g.renderDashboard(w, r, s, "", "The password is set with ADMIN_PASSWORD and can only be changed there.")
-		return
-	}
-	if ok, _ := g.checkAdmin(r, r.PostFormValue("current")); !ok {
-		g.renderDashboard(w, r, s, "", "The current password is wrong.")
-		return
-	}
-	pw := r.PostFormValue("password")
-	if msg := weakPassword(pw, r.PostFormValue("password2")); msg != "" {
-		g.renderDashboard(w, r, s, "", msg)
-		return
-	}
-	if err := g.store.update(func(p *persisted) { p.AdminHash = hashPassword(pw) }); err != nil {
-		g.renderDashboard(w, r, s, "", err.Error())
-		return
-	}
-	g.renderDashboard(w, r, s, "Password changed.", "")
 }
 
 // ---------- dashboard ----------
@@ -180,7 +110,7 @@ type clientRow struct {
 }
 
 func (g *gateway) renderDashboard(w http.ResponseWriter, r *http.Request, s *session, msg, errMsg string) {
-	p := page{Title: "Overview", CSRF: s.CSRF, Message: msg, Error: errMsg, Base: g.base(r), PasswordFromEnv: g.adminEnv != ""}
+	p := page{Title: "Overview", CSRF: s.CSRF, Message: msg, Error: errMsg, Base: g.base(r)}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	type res struct {

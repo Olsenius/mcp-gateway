@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
@@ -13,7 +12,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 )
@@ -40,9 +38,8 @@ type grant struct {
 }
 
 type persisted struct {
-	AdminHash string             `json:"admin_hash,omitempty"`
-	Clients   map[string]*client `json:"clients"`
-	Grants    []grant            `json:"grants"`
+	Clients map[string]*client `json:"clients"`
+	Grants  []grant            `json:"grants"`
 }
 
 // store keeps gateway state in DATA_DIR/gateway.json (mode 0600).
@@ -127,30 +124,3 @@ func sha(s string) string {
 }
 
 func constEq(a, b string) bool { return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1 }
-
-const pbkdfIter = 600_000
-
-func hashPassword(pw string) string {
-	salt := make([]byte, 16)
-	rand.Read(salt)
-	key, _ := pbkdf2.Key(sha256.New, pw, salt, pbkdfIter, 32)
-	return fmt.Sprintf("pbkdf2-sha256$%d$%s$%s", pbkdfIter, base64.RawStdEncoding.EncodeToString(salt), base64.RawStdEncoding.EncodeToString(key))
-}
-
-func checkPassword(hash, pw string) bool {
-	parts := strings.Split(hash, "$")
-	if len(parts) != 4 || parts[0] != "pbkdf2-sha256" {
-		return false
-	}
-	var iter int
-	if _, err := fmt.Sscan(parts[1], &iter); err != nil || iter < 1 {
-		return false
-	}
-	salt, err1 := base64.RawStdEncoding.DecodeString(parts[2])
-	want, err2 := base64.RawStdEncoding.DecodeString(parts[3])
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	got, err := pbkdf2.Key(sha256.New, pw, salt, iter, len(want))
-	return err == nil && subtle.ConstantTimeCompare(got, want) == 1
-}

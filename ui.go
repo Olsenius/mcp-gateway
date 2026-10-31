@@ -8,7 +8,6 @@ import (
 
 type page struct {
 	Title, CSRF, Message, Error, Base string
-	PasswordFromEnv                   bool
 
 	Upstreams []upstreamRow
 	Personal  []grantRow
@@ -66,17 +65,6 @@ form.inline{display:inline}
 {{define "foot"}}</main></body></html>{{end}}
 
 {{define "msgs"}}{{if .Message}}<div class="msg ok">{{.Message}}</div>{{end}}{{if .Error}}<div class="msg err">{{.Error}}</div>{{end}}{{end}}
-
-{{define "setup"}}{{template "head" .}}
-<h1>First-time setup</h1>{{template "msgs" .}}
-<div class="card"><p>Choose an admin password. It protects this page and logins from claude.ai, ChatGPT and other apps.</p>
-<p class="help">The setup code is in the gateway log, e.g. <code>docker compose logs gateway</code>.</p>
-<form method="post" action="/admin/setup">
-<label>Setup code</label><input type="text" name="code" autocomplete="off" required>
-<label>New password (at least 12 characters)</label><input type="password" name="password" autocomplete="new-password" required>
-<label>Repeat the password</label><input type="password" name="password2" autocomplete="new-password" required>
-<p><button>Save password</button></p></form></div>
-{{template "foot"}}{{end}}
 
 {{define "login"}}{{template "head" .}}
 <h1>MCP gateway</h1>{{template "msgs" .}}
@@ -146,12 +134,7 @@ form.inline{display:inline}
 <button class="secondary">Create token</button></div></form></div>
 
 <div class="card"><h2>Admin password</h2>
-{{if .PasswordFromEnv}}<p class="help">Set with ADMIN_PASSWORD.</p>{{else}}
-<form method="post" action="/admin/password"><input type="hidden" name="csrf" value="{{.CSRF}}">
-<label>Current password</label><input type="password" name="current" autocomplete="current-password" required>
-<label>New password</label><input type="password" name="password" autocomplete="new-password" required>
-<label>Repeat new password</label><input type="password" name="password2" autocomplete="new-password" required>
-<p><button class="secondary">Change password</button></p></form>{{end}}</div>
+<p class="help">Set with <code>ADMIN_PASSWORD</code> (at least 40 characters), or generated on first start and printed in the gateway log.</p></div>
 {{template "foot"}}{{end}}
 
 {{define "upstream"}}{{template "head" .}}
@@ -190,10 +173,6 @@ func (g *gateway) render(w http.ResponseWriter, name string, p page) {
 }
 
 func (g *gateway) renderLogin(w http.ResponseWriter, r *http.Request, msg string) {
-	if !g.hasAdmin() {
-		g.render(w, "setup", page{Title: "First-time setup"})
-		return
-	}
 	g.render(w, "login", page{Title: "Log in", Error: msg})
 }
 
@@ -210,9 +189,6 @@ func (g *gateway) renderConsent(w http.ResponseWriter, r *http.Request, id strin
 	pg := page{Title: "Allow access", Error: errMsg, ReqID: id, ClientName: p.ClientName, ClientID: p.ClientID, Redirect: p.RedirectURI, Resource: p.Resource}
 	if s := g.currentSession(r); s != nil {
 		pg.LoggedIn, pg.CSRF = true, s.CSRF
-	}
-	if !g.hasAdmin() {
-		pg.Error = "The gateway has no admin password yet. Open /admin first."
 	}
 	g.render(w, "consent", pg)
 }

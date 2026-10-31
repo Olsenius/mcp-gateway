@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -67,8 +68,7 @@ type gateway struct {
 	log       *slog.Logger
 	store     *store
 	publicURL string
-	adminEnv  string
-	setupCode string
+	adminPW   string // ADMIN_PASSWORD, or generated and kept in DATA_DIR
 	upstreams map[string]*upstream
 	order     []string
 	accessTTL time.Duration
@@ -147,7 +147,6 @@ func main() {
 		log:       log,
 		store:     openStore(env("DATA_DIR", "/data"), log),
 		publicURL: strings.TrimRight(env("PUBLIC_URL", ""), "/"),
-		adminEnv:  os.Getenv("ADMIN_PASSWORD"),
 		upstreams: ups,
 		order:     order,
 		accessTTL: parseDur("ACCESS_TOKEN_TTL", time.Hour),
@@ -161,9 +160,14 @@ func main() {
 	if g.publicURL == "" {
 		log.Warn("PUBLIC_URL is not set; it is guessed from each request (set it to your public https URL)")
 	}
-	if !g.hasAdmin() {
-		g.setupCode = randomToken(9)
-		log.Warn("no admin password yet: open /admin and use this one-time setup code", "setup_code", g.setupCode)
+	pw, source, err := adminPassword(env("DATA_DIR", "/data"))
+	if err != nil {
+		log.Error("config", "err", err)
+		os.Exit(2)
+	}
+	g.adminPW = pw
+	if source != "env" {
+		log.Warn("admin password (set ADMIN_PASSWORD to choose your own; delete the file to make a new one)", "admin_password", pw, "file", source)
 	}
 	for _, n := range order {
 		if ups[n].Token == "" {
@@ -213,9 +217,7 @@ func (g *gateway) routes() http.Handler {
 	// Admin.
 	mux.HandleFunc("GET /admin", g.handleAdmin)
 	mux.HandleFunc("POST /admin/login", g.handleLogin)
-	mux.HandleFunc("POST /admin/setup", g.handleFirstSetup)
 	mux.HandleFunc("POST /admin/logout", g.handleLogout)
-	mux.HandleFunc("POST /admin/password", g.handleChangePassword)
 	mux.HandleFunc("GET /admin/u/{name}", g.handleUpstreamPage)
 	mux.HandleFunc("POST /admin/u/{name}/save", g.handleUpstreamSave)
 	mux.HandleFunc("POST /admin/u/{name}/test", g.handleUpstreamTest)
@@ -359,13 +361,33 @@ func clientIP(r *http.Request) string {
 
 // ---------- admin password ----------
 
-func (g *gateway) hasAdmin() bool {
-	if g.adminEnv != "" {
-		return true
+const minAdminPassword = 40
+
+// adminPassword returns ADMIN_PASSWORD (at least 40 characters), or a
+// random password generated on first start and kept in DATA_DIR. source
+// is "env", the file path, or "memory" when DATA_DIR is not writable.
+func adminPassword(dir string) (pw, source string, err error) {
+	if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
+		if n := len([]rune(v)); n < minAdminPassword {
+			return "", "", fmt.Errorf("ADMIN_PASSWORD must have at least %d characters (has %d); leave it unset to get a generated one", minAdminPassword, n)
+		}
+		return v, "env", nil
 	}
-	var h string
-	g.store.read(func(p *persisted) { h = p.AdminHash })
-	return h != ""
+	if dir != "" {
+		path := filepath.Join(dir, "admin-password")
+		if data, err := os.ReadFile(path); err == nil {
+			if v := strings.TrimSpace(string(data)); len(v) >= minAdminPassword {
+				return v, path, nil
+			}
+		}
+		pw = randomToken(36) // 48 characters
+		if err := os.MkdirAll(dir, 0o700); err == nil {
+			if err := os.WriteFile(path, []byte(pw+"\n"), 0o600); err == nil {
+				return pw, path, nil
+			}
+		}
+	}
+	return randomToken(36), "memory", nil
 }
 
 // checkAdmin verifies the admin password, with rate limiting.
@@ -374,17 +396,7 @@ func (g *gateway) checkAdmin(r *http.Request, pw string) (ok bool, msg string) {
 	if g.limiter.blocked(ip) {
 		return false, "Too many failed attempts. Wait 15 minutes."
 	}
-	good := false
-	if pw != "" {
-		if g.adminEnv != "" {
-			good = constEq(pw, g.adminEnv)
-		} else {
-			var h string
-			g.store.read(func(p *persisted) { h = p.AdminHash })
-			good = h != "" && checkPassword(h, pw)
-		}
-	}
-	if !good {
+	if pw == "" || !constEq(pw, g.adminPW) {
 		g.limiter.fail(ip)
 		time.Sleep(700 * time.Millisecond)
 		g.log.Warn("failed admin login", "ip", ip)

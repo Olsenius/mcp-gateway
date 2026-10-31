@@ -58,7 +58,7 @@ func newTestGateway(t *testing.T, upURL, upToken, adminPW string) (*gateway, *ht
 	}
 	g := &gateway{
 		log: slog.New(slog.NewTextHandler(io.Discard, nil)), store: openStore("", slog.New(slog.NewTextHandler(io.Discard, nil))),
-		adminEnv: adminPW, upstreams: ups, order: order, accessTTL: time.Hour, refreshTT: time.Hour,
+		adminPW: adminPW, upstreams: ups, order: order, accessTTL: time.Hour, refreshTT: time.Hour,
 		sessions: map[string]*session{}, tokens: map[string]accessToken{}, pending: map[string]*pendingAuth{},
 		codes: map[string]*authCode{}, limiter: newLimiter(),
 	}
@@ -207,5 +207,30 @@ func TestParseUpstreams(t *testing.T) {
 	ups, order, err := parseUpstreams("b=http://b:8080, a=http://a:8080/")
 	if err != nil || len(ups) != 2 || order[0] != "a" || ups["a"].URL.String() != "http://a:8080" {
 		t.Fatalf("got %v %v %v", ups, order, err)
+	}
+}
+
+func TestAdminPassword(t *testing.T) {
+	dir := t.TempDir()
+
+	t.Setenv("ADMIN_PASSWORD", "too short")
+	if _, _, err := adminPassword(dir); err == nil {
+		t.Fatal("short ADMIN_PASSWORD must be refused")
+	}
+
+	long := strings.Repeat("x", 40)
+	t.Setenv("ADMIN_PASSWORD", long)
+	if pw, src, err := adminPassword(dir); err != nil || pw != long || src != "env" {
+		t.Fatalf("env password: %q %q %v", pw, src, err)
+	}
+
+	t.Setenv("ADMIN_PASSWORD", "")
+	pw1, src, err := adminPassword(dir)
+	if err != nil || len(pw1) < 40 || !strings.HasSuffix(src, "admin-password") {
+		t.Fatalf("generated: %q %q %v", pw1, src, err)
+	}
+	pw2, _, _ := adminPassword(dir)
+	if pw1 != pw2 {
+		t.Fatal("generated password must stay the same across restarts")
 	}
 }
