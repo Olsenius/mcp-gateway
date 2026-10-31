@@ -7,6 +7,7 @@ services:
       OTEL_SERVICE_NAME: mcp-gateway
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
       OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-always_on}
     depends_on:
       jaeger:
         condition: service_started

@@ -169,7 +169,9 @@ docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway jae
 ```
 
 The override configures the gateway to export to `http://jaeger:4318` at info
-level. Jaeger accepts OTLP/HTTP on port 4318 and OTLP/gRPC on 4317. Its UI is on
+level, with `always_on` sampling so that requests are recorded even when a
+client sends an unsampled parent trace. Set `OTEL_TRACES_SAMPLER` to override
+this test policy. Jaeger accepts OTLP/HTTP on port 4318 and OTLP/gRPC on 4317. Its UI is on
 16686. Published ports bind to the Docker host's loopback interface by default.
 For direct access over a private network, set `JAEGER_BIND_ADDRESS` to the VM's
 private IP in `.env` and recreate Jaeger; for example `10.116.0.151` exposes the
