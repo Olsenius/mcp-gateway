@@ -1,0 +1,72 @@
+# MCP gateway in front of bibliofil-mcp, reachable from the internet
+# through Tailscale Funnel. Copy .env.example to .env and fill it in.
+#
+#   docker compose up -d
+#   docker compose logs gateway   # shows the one-time setup code
+#
+# Then open https://<machine>.<tailnet>.ts.net/admin
+
+services:
+  gateway:
+    image: ghcr.io/olsenius/mcp-gateway:latest
+    restart: unless-stopped
+    environment:
+      PUBLIC_URL: ${PUBLIC_URL}
+      UPSTREAMS: bibliofil=http://bibliofil:8080
+      UPSTREAM_TOKEN_BIBLIOFIL: ${BIBLIOFIL_TOKEN}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+    volumes:
+      - gateway-data:/data
+    networks: [internal]
+    # Only for local testing without a tunnel:
+    # ports: ["127.0.0.1:8080:8080"]
+
+  bibliofil:
+    image: ghcr.io/olsenius/bibliofil-mcp:latest
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${BIBLIOFIL_TOKEN}
+      # Optional: set here instead of on the admin page (then locked there).
+      BIBLIOFIL_URL: ${BIBLIOFIL_URL:-}
+      BIBLIOFIL_USER: ${BIBLIOFIL_USER:-}
+      BIBLIOFIL_PIN: ${BIBLIOFIL_PIN:-}
+      BIBLIOFIL_PICKUP: ${BIBLIOFIL_PICKUP:-}
+      BIBSOK_PICKUP: ${BIBSOK_PICKUP:-}
+    volumes:
+      - bibliofil-data:/data
+    networks: [internal]
+
+  # Public HTTPS via Tailscale Funnel. Needs an auth key from
+  # https://login.tailscale.com/admin/settings/keys and Funnel enabled
+  # for the tailnet. Use the cloudflared service below instead if you
+  # prefer Cloudflare Tunnel.
+  tailscale:
+    image: tailscale/tailscale:latest
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-mcp}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/funnel.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+      - ./funnel.json:/config/funnel.json:ro
+    networks: [internal]
+
+  # cloudflared:
+  #   image: cloudflare/cloudflared:latest
+  #   restart: unless-stopped
+  #   command: tunnel --no-autoupdate run
+  #   environment:
+  #     TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN}
+  #   networks: [internal]
+  #   # In the Cloudflare dashboard, point the public hostname to http://gateway:8080
+
+volumes:
+  gateway-data:
+  bibliofil-data:
+  tailscale-state:
+
+networks:
+  internal:
