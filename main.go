@@ -137,7 +137,23 @@ func main() {
 		os.Exit(0)
 	}
 
-	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	log, err := newLogger(os.Stderr)
+	if err != nil {
+		slog.Error("config", "err", err)
+		os.Exit(2)
+	}
+	shutdownTracing, err := initTracing(context.Background())
+	if err != nil {
+		log.Error("tracing config", "err", err)
+		os.Exit(2)
+	}
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdownTracing(ctx); err != nil {
+			log.Warn("trace shutdown", "err", err)
+		}
+	}()
 	ups, order, err := parseUpstreams(env("UPSTREAMS", ""))
 	if err != nil {
 		log.Error("config", "err", err)
@@ -184,7 +200,9 @@ func main() {
 		Handler:           g.routes(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
+	shutdownDone := make(chan struct{})
 	go func() {
+		defer close(shutdownDone)
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -195,6 +213,7 @@ func main() {
 		log.Error("http", "err", err)
 		os.Exit(1)
 	}
+	<-shutdownDone
 }
 
 func (g *gateway) routes() http.Handler {
@@ -227,7 +246,7 @@ func (g *gateway) routes() http.Handler {
 
 	// MCP proxy: /<name>/mcp
 	mux.HandleFunc("/{name}/mcp", g.handleMCP)
-	return g.accessLog(securityHeaders(mux))
+	return traceHTTP(g.accessLog(securityHeaders(mux)))
 }
 
 func securityHeaders(next http.Handler) http.Handler {

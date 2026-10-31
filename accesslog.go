@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const logBodyLimit = 1 << 20
@@ -123,7 +127,7 @@ func redactLogValue(v any) {
 	}
 }
 
-// accessLog logs OAuth metadata and bounded, redacted MCP request/response bodies.
+// accessLog logs request metadata at INFO and redacted MCP bodies at DEBUG.
 func (g *gateway) accessLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
@@ -132,6 +136,7 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
+		debug := mcp && g.log.Enabled(r.Context(), slog.LevelDebug)
 		rpc, requestBody := "", ""
 		if mcp && r.Body != nil {
 			original := r.Body
@@ -141,7 +146,9 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 				io.Reader
 				io.Closer
 			}{io.MultiReader(bytes.NewReader(body), original), original}
-			requestBody = loggedBody(body)
+			if debug {
+				requestBody = loggedBody(body)
+			}
 			var m struct {
 				Method string `json:"method"`
 			}
@@ -149,7 +156,11 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 				rpc = m.Method
 			}
 		}
-		sw := &statusWriter{ResponseWriter: w, capture: mcp}
+		sw := &statusWriter{ResponseWriter: w, capture: debug}
+		span := trace.SpanFromContext(r.Context())
+		if rpc != "" {
+			span.SetAttributes(attribute.String("rpc.system.name", "jsonrpc"), attribute.String("rpc.method", rpc))
+		}
 		start := time.Now()
 		next.ServeHTTP(sw, r)
 		if sw.code == 0 {
@@ -157,9 +168,13 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 		}
 		attrs := []any{"method", r.Method, "path", p, "rpc", rpc, "status", sw.code, "bytes", sw.bytes,
 			"ms", time.Since(start).Milliseconds(), "auth", r.Header.Get("Authorization") != "", "ua", r.UserAgent()}
-		if mcp {
-			attrs = append(attrs, "request_body", requestBody, "response_body", loggedBody(sw.body))
+		if sc := span.SpanContext(); sc.IsValid() {
+			attrs = append(attrs, "trace_id", sc.TraceID().String(), "span_id", sc.SpanID().String())
 		}
-		g.log.Info("request", attrs...)
+		g.log.InfoContext(r.Context(), "request", attrs...)
+		if debug {
+			attrs = append(attrs, "request_body", requestBody, "response_body", loggedBody(sw.body))
+			g.log.DebugContext(r.Context(), "mcp bodies", attrs...)
+		}
 	})
 }

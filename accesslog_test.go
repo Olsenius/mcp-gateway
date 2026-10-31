@@ -12,7 +12,7 @@ import (
 
 func TestAccessLogBodies(t *testing.T) {
 	var logs bytes.Buffer
-	g := &gateway{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+	g := &gateway{log: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 	request := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"access_token":"request-secret"}}`
 	response := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":1,\"error\":{\"code\":-32601,\"message\":\"Unknown method\"},\"refresh_token\":\"response-secret\"}\n\n"
 	handler := g.accessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -48,7 +48,7 @@ func TestAccessLogLargeRequestAndOAuth(t *testing.T) {
 	for _, path := range []string{"/bibliofil/mcp", "/oauth/token"} {
 		t.Run(path, func(t *testing.T) {
 			var logs bytes.Buffer
-			g := &gateway{log: slog.New(slog.NewJSONHandler(&logs, nil))}
+			g := &gateway{log: slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
 			body := strings.Repeat("x", logBodyLimit+100)
 			handler := g.accessLog(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				got, _ := io.ReadAll(r.Body)

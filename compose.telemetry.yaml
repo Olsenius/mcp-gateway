@@ -1,0 +1,21 @@
+# Add to the base Compose file for a temporary tracing environment:
+# docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway jaeger
+services:
+  gateway:
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      OTEL_SERVICE_NAME: mcp-gateway
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+    depends_on:
+      jaeger:
+        condition: service_started
+
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.22.0
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:16686:16686"
+      - "127.0.0.1:4318:4318"
+      - "127.0.0.1:4317:4317"
+    networks: [internal]

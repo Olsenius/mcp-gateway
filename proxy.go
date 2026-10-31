@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 var proxies sync.Map // name -> *httputil.ReverseProxy
@@ -31,6 +34,7 @@ func (g *gateway) proxyFor(u *upstream) *httputil.ReverseProxy {
 			}
 			pr.SetXForwarded()
 		},
+		Transport:     tracingTransport{},
 		FlushInterval: -1, // stream server-sent events at once
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			g.log.Warn("upstream error", "upstream", u.Name, "err", err)
@@ -67,6 +71,7 @@ func (g *gateway) handleMCP(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid_token", "error_description": "log in via OAuth or use a token from the admin page"})
 		return
 	}
+	trace.SpanFromContext(r.Context()).SetAttributes(attribute.String("mcp.upstream", name))
 	g.proxyFor(u).ServeHTTP(w, r)
 }
 
@@ -109,7 +114,7 @@ type health struct {
 	Checks []check `json:"checks"`
 }
 
-var upstreamHTTP = &http.Client{Timeout: 60 * time.Second}
+var upstreamHTTP = &http.Client{Timeout: 60 * time.Second, Transport: tracingTransport{}}
 
 func (g *gateway) upstreamCall(ctx context.Context, u *upstream, method, path string, body io.Reader, out any) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(u.URL.String(), "/")+path, body)
