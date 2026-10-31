@@ -129,3 +129,12 @@ See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configap
 go test ./...
 docker build -t mcp-gateway .
 ```
+
+### Request logs
+
+OAuth and MCP requests log method, path, RPC method, HTTP status and duration.
+MCP entries also include `request_body` and `response_body` for JSON and SSE JSON
+messages, limited to 1 MiB per body. Known credential field names are redacted;
+OAuth bodies and HTTP headers are never logged. Other MCP arguments and results
+can contain private data and will appear in the logs. Oversized or non-JSON bodies
+are omitted. Streaming responses are logged when the request ends.
