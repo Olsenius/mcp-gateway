@@ -96,10 +96,11 @@ type field struct {
 }
 
 type configDoc struct {
-	Name       string  `json:"name"`
-	Version    string  `json:"version"`
-	Configured bool    `json:"configured"`
-	Fields     []field `json:"fields"`
+	Setup      *setupCapability `json:"setup,omitempty"`
+	Name       string           `json:"name"`
+	Version    string           `json:"version"`
+	Configured bool             `json:"configured"`
+	Fields     []field          `json:"fields"`
 }
 
 type check struct {

@@ -17,6 +17,7 @@ type page struct {
 	MCPURL   string
 	Config   *configDoc
 	Health   *health
+	Setup    *setupAttempt
 
 	// consent
 	ReqID, ClientName, ClientID, Redirect, Resource string
@@ -168,6 +169,12 @@ form.inline{display:inline}
 <p class="help">{{if .Help}}{{.Help}} {{end}}<code>{{.Key}}</code>{{if .Locked}} <span class="lock">– locked by environment variable</span>{{end}}{{if and (eq .Type "select") (not .Options)}} <span class="lock">– choices appear once the account works</span>{{end}}</p>
 {{end}}
 <p class="row"><button>Save</button></p></form></div>{{end}}
+{{if .Config}}{{if .Config.Setup}}<div class="card"><h2>Login</h2><p>Status: {{if .Config.Setup.StatusLabel}}{{.Config.Setup.StatusLabel}}{{else}}{{.Config.Setup.Status}}{{end}}</p>
+<form method="post" action="/admin/u/{{.Upstream}}/setup/start"><input type="hidden" name="csrf" value="{{.CSRF}}"><button>Logg inn hos {{.Upstream}}</button></form>
+{{if .Setup}}{{if .Setup.AttemptID}}<p><a href="{{.Setup.AuthorizationURL}}" target="_blank" rel="noopener noreferrer">Opne innlogging</a></p><p>{{.Setup.Instructions}}</p>
+<form method="post" action="/admin/u/{{.Upstream}}/setup/complete" autocomplete="off"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="attempt_id" value="{{.Setup.AttemptID}}"><label for="setup_input">Returadresse</label><textarea id="setup_input" name="input" required></textarea><button>Fullfør innlogging</button></form>
+<form method="post" action="/admin/u/{{.Upstream}}/setup/cancel"><input type="hidden" name="csrf" value="{{.CSRF}}"><input type="hidden" name="attempt_id" value="{{.Setup.AttemptID}}"><button>Avbryt</button></form>
+{{end}}{{end}}</div>{{end}}{{end}}
 {{template "foot"}}{{end}}
 `))
 

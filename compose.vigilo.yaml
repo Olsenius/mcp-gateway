@@ -1,0 +1,30 @@
+# docker compose -f docker-compose.yml -f compose.vigilo.yaml up -d
+services:
+  gateway:
+    environment:
+      UPSTREAMS: bibliofil=http://bibliofil:8080,vigilo=http://vigilo:8080
+      UPSTREAM_TOKEN_VIGILO: ${VIGILO_TOKEN:?Set VIGILO_TOKEN}
+  vigilo:
+    build: ../vigilo/vigilo-connector
+    image: vigilo-mcp:local
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${VIGILO_TOKEN:?Set VIGILO_TOKEN}
+      MCP_ALLOWED_ORIGINS: ${PUBLIC_URL}
+      OTEL_SERVICE_NAME: vigilo-mcp
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+      DATA_DIR: /data
+      VIGILO_CONFIG_DIR: /data/vigilo
+    volumes: [vigilo-data:/data]
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+volumes:
+  vigilo-data:

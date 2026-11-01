@@ -65,6 +65,7 @@ type authCode struct {
 }
 
 type gateway struct {
+	setupAttempts  sync.Map
 	log            *slog.Logger
 	store          *store
 	publicURL      string
@@ -299,6 +300,7 @@ func (g *gateway) routes() http.Handler {
 	mux.HandleFunc("GET /admin/u/{name}", g.handleUpstreamPage)
 	mux.HandleFunc("POST /admin/u/{name}/save", g.handleUpstreamSave)
 	mux.HandleFunc("POST /admin/u/{name}/test", g.handleUpstreamTest)
+	mux.HandleFunc("POST /admin/u/{name}/setup/{action}", g.handleSetup)
 	mux.HandleFunc("POST /admin/tokens", g.handleCreatePersonalToken)
 	mux.HandleFunc("POST /admin/clients", g.handleCreateClient)
 	mux.HandleFunc("POST /admin/revoke", g.handleAdminRevoke)

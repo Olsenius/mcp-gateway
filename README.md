@@ -238,3 +238,44 @@ docker compose restart gateway
 
 Retrieve it with `-print-admin-password` afterwards. If `ADMIN_PASSWORD` is set,
 rotate that value in your deployment configuration instead.
+
+## Optional backend login actions
+
+A backend may add `"setup":{"status":"login_required"}` to its `/config` response.
+An optional `status_label` inside `setup` provides a human-readable status; otherwise `status` is displayed.
+The admin page then renders login actions next to the ordinary settings. Backends
+without this capability retain the existing form and Test button.
+
+All calls use the internal upstream bearer token. The browser never receives it:
+
+| Backend endpoint | JSON contract |
+|---|---|
+| `POST /setup/start` | Request `{}`. Response `{"attempt_id":"opaque","authorization_url":"https://login.example/authorize?...","expires_at":1893456000,"instructions":"Plain text"}` |
+| `POST /setup/complete` | Request `{"attempt_id":"opaque","input":"pasted return URL"}`. Response uses the health contract with `ok`, `status`, `checks`; optionally `tokens_saved` |
+| `POST /setup/cancel` | Request `{"attempt_id":"opaque"}`. Idempotent response `{"ok":true}` |
+
+Gateway routes are `/admin/u/{name}/setup/{start,complete,cancel}` (POST only),
+requiring an admin cookie and CSRF token. Attempts are bound to that admin session
+and backend, expire, and are consumed on completion/cancel. Reloading or restarting
+the gateway loses the browser's pending form; start login again. Starting another
+attempt does not overwrite state in other tabs. The backend must also enforce its
+own expiry, one-time completion and state validation. Credential updates should
+invalidate its pending attempts.
+
+Login links must use HTTPS without embedded credentials. They are opened by the
+browser, never fetched by the gateway. Instructions are plain escaped text. This
+is a fixed set of actions, not arbitrary backend URL proxying. Upstream errors
+from these actions are hidden behind a generic failure to avoid returning pasted
+credentials. Request bodies and login links must not be logged or traced.
+
+For Vigilo, set `VIGILO_TOKEN` in `.env` and run:
+
+```sh
+docker compose -f docker-compose.yml -f compose.vigilo.yaml up -d
+```
+
+The overlay builds `../vigilo/vigilo-connector`, runs it internally and keeps
+Bibliofil available. Adjust the build path if your checkout layout differs.
+Set `PUBLIC_URL` to the gateway's public HTTPS URL; the overlay also supplies it
+as Vigilo's allowed MCP Origin. Use the backend migration guide before moving an
+existing rotating-token account. No existing Vigilo volume is imported automatically.
