@@ -3,7 +3,8 @@
 Put OAuth 2.1 login in front of your self-hosted [MCP](https://modelcontextprotocol.io) servers,
 so **claude.ai**, **ChatGPT** and other remote MCP clients can use them over the internet.
 
-- One admin password protects everything. No external identity provider needed.
+- One admin password protects everything. No external identity provider needed, but you can add
+  login through an OpenID Connect provider such as [Pocket ID](https://pocket-id.org).
 - An admin page shows each MCP server's settings as a form, and a **Test** button checks that they work.
 - The MCP servers stay on an internal Docker network with no open ports.
 - Static Go binary in a distroless image, with optional OpenTelemetry tracing.
@@ -34,7 +35,7 @@ Then open the server's **Settings and test** page, fill in the settings, save, a
 Each MCP server gets its own URL: `https://<your-host>/<name>/mcp`.
 
 - **claude.ai:** Settings → Connectors → Add custom connector → paste the URL. Claude registers itself,
-  and you approve it with the admin password.
+  and you approve it with the admin password (or your OIDC login, if enabled).
 - **ChatGPT:** Developer mode → create a connector → paste the URL, authentication OAuth.
 - **Claude Code and other clients with a fixed header:** make a personal token on the admin page and use
   `Authorization: Bearer <token>`:
@@ -55,6 +56,11 @@ The admin page lists connected apps, and you can log out one or all of them.
 | `UPSTREAM_TOKEN_<NAME>` | – | Per-server token, overrides `UPSTREAM_TOKEN` (name upper-cased, `-` → `_`) |
 | `PUBLIC_URL` | guessed | The public https URL, e.g. `https://mcp.example.ts.net`. Set it. |
 | `ADMIN_PASSWORD` | generated | Admin password, at least 40 characters, or the gateway refuses to start. If unset, a random 48-character password is generated on first start, stored in `DATA_DIR/admin-password` and retrieved explicitly with `-print-admin-password` |
+| `OIDC_ISSUER` | unset | Turns on "Log in with …" through an OpenID Connect provider, e.g. `https://id.example.com`. The admin password keeps working. Needs `PUBLIC_URL` |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | – | Required with `OIDC_ISSUER` |
+| `OIDC_ALLOWED_GROUPS` | – | Comma-separated groups (from the `groups` claim) that may log in |
+| `OIDC_ALLOWED_USERS` | – | Comma-separated verified e-mail addresses or subject IDs that may log in. At least one of the two lists is required |
+| `OIDC_LABEL` | issuer host | Text on the login button |
 | `DATA_DIR` | `/data` | Where clients, refresh tokens and the generated admin password are stored |
 | `ACCESS_TOKEN_TTL` | `1h` | Lifetime of OAuth access tokens |
 | `REFRESH_TOKEN_TTL` | `720h` | Lifetime of refresh tokens (rotated on every use) |
@@ -68,6 +74,24 @@ The admin page lists connected apps, and you can log out one or all of them.
 | `OTEL_SDK_DISABLED` | `false` | Disable trace export even with an endpoint configured |
 | `OTEL_TRACES_SAMPLER` | `parentbased_always_on` | Standard OpenTelemetry sampler, e.g. `parentbased_traceidratio` |
 | `OTEL_TRACES_SAMPLER_ARG` | unset | Ratio for ratio-based samplers, e.g. `0.1` |
+
+## Login with OpenID Connect (optional)
+
+Besides the admin password, the admin page and the "Allow access?" page can offer
+**Log in with &lt;provider&gt;**. Example with Pocket ID:
+
+1. In Pocket ID, add an OIDC client with callback URL `https://<your-host>/admin/oidc/callback`.
+   Keep it a confidential client (not public) and note the client ID and secret.
+2. Make a group, e.g. `mcp-admins`, and add yourself to it.
+3. Set `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` and `OIDC_ALLOWED_GROUPS=mcp-admins`, and restart.
+
+Groups are the safer choice: in some providers users can edit their own e-mail address, while
+groups are set by the provider's admin. Anyone who passes the check gets full admin access to the gateway.
+
+The gateway uses the authorization code flow with PKCE, a nonce and a state cookie bound to the
+browser, and checks the ID token's RS256 signature, issuer, audience and expiry. Logging in with
+OIDC from the "Allow access?" page brings you back to it, and you still have to press **Allow**.
+If the provider is down, the admin password still works.
 
 ## Exposing it to the internet
 
@@ -123,7 +147,10 @@ See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configap
 
 - OAuth 2.1 with PKCE (S256 only), dynamic client registration (RFC 7591), client ID metadata documents,
   protected resource metadata (RFC 9728) and resource indicators (RFC 8707). Tokens are bound to one MCP server.
-- Every new app must be approved with the admin password on a consent page that shows where it will be sent.
+- Every new app must be approved on a consent page that shows where it will be sent, by the admin password
+  or an allowed OIDC login followed by pressing **Allow**.
+- With OIDC on, the gateway is only as safe as the provider account: protect it with a passkey, and keep
+  the allowed group small.
 - Failed logins are rate limited (5 per IP per 15 minutes). Correct credentials remain usable even after failed attempts.
 - Tokens and client secrets are stored only as SHA-256 hashes.
 - The admin password has at least 40 characters. To change a generated one, run

@@ -74,13 +74,15 @@ type gateway struct {
 	accessTTL      time.Duration
 	refreshTT      time.Duration
 	trustedProxies []netip.Prefix
+	oidc           *oidcProvider // nil unless OIDC_ISSUER is set
 
-	mu       sync.Mutex
-	sessions map[string]*session
-	tokens   map[string]accessToken // sha(token) -> info
-	pending  map[string]*pendingAuth
-	codes    map[string]*authCode // sha(code) -> code
-	limiter  *limiter
+	mu         sync.Mutex
+	sessions   map[string]*session
+	tokens     map[string]accessToken // sha(token) -> info
+	pending    map[string]*pendingAuth
+	codes      map[string]*authCode  // sha(code) -> code
+	oidcLogins map[string]*oidcLogin // sha(state) -> login
+	limiter    *limiter
 }
 
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}$`)
@@ -218,10 +220,21 @@ func main() {
 		tokens:         map[string]accessToken{},
 		pending:        map[string]*pendingAuth{},
 		codes:          map[string]*authCode{},
+		oidcLogins:     map[string]*oidcLogin{},
 		limiter:        newLimiter(),
 	}
 	if g.publicURL == "" {
 		log.Warn("PUBLIC_URL is not set; it is guessed from each request (set it to your public https URL)")
+	}
+	oc, err := oidcFromEnv(g.publicURL)
+	if err != nil {
+		log.Error("config", "err", err)
+		os.Exit(2)
+	}
+	if oc != nil {
+		g.oidc = newOIDCProvider(*oc)
+		log.Info("OIDC login enabled", "issuer", oc.Issuer, "redirect_url", oc.RedirectURL,
+			"allowed_users", len(oc.AllowedUsers), "allowed_groups", strings.Join(oc.AllowedGroups, ","))
 	}
 	pw, source, err := adminPassword(env("DATA_DIR", "/data"))
 	if err != nil {
@@ -273,6 +286,7 @@ func (g *gateway) routes() http.Handler {
 	mux.HandleFunc("POST /oauth/register", g.handleRegister)
 	mux.HandleFunc("GET /oauth/authorize", g.handleAuthorize)
 	mux.HandleFunc("POST /oauth/authorize", g.handleAuthorizePost)
+	mux.HandleFunc("GET /oauth/authorize/resume", g.handleAuthorizeResume)
 	mux.HandleFunc("POST /oauth/token", g.handleToken)
 	mux.HandleFunc("POST /oauth/revoke", g.handleRevoke)
 
@@ -280,6 +294,8 @@ func (g *gateway) routes() http.Handler {
 	mux.HandleFunc("GET /admin", g.handleAdmin)
 	mux.HandleFunc("POST /admin/login", g.handleLogin)
 	mux.HandleFunc("POST /admin/logout", g.handleLogout)
+	mux.HandleFunc("GET /admin/oidc/login", g.handleOIDCLogin)
+	mux.HandleFunc("GET /admin/oidc/callback", g.handleOIDCCallback)
 	mux.HandleFunc("GET /admin/u/{name}", g.handleUpstreamPage)
 	mux.HandleFunc("POST /admin/u/{name}/save", g.handleUpstreamSave)
 	mux.HandleFunc("POST /admin/u/{name}/test", g.handleUpstreamTest)
@@ -358,6 +374,11 @@ func (g *gateway) janitor(ctx context.Context) {
 			for k, v := range g.codes {
 				if now.After(v.Expires) {
 					delete(g.codes, k)
+				}
+			}
+			for k, v := range g.oidcLogins {
+				if now.After(v.Expires) {
+					delete(g.oidcLogins, k)
 				}
 			}
 			g.mu.Unlock()

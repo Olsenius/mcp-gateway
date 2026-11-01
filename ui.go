@@ -21,6 +21,8 @@ type page struct {
 	// consent
 	ReqID, ClientName, ClientID, Redirect, Resource string
 	LoggedIn                                        bool
+
+	OIDCLabel string // set when login through an OIDC provider is enabled
 }
 
 var funcs = template.FuncMap{
@@ -52,6 +54,7 @@ label{display:block;font-weight:600;margin:14px 0 4px}
 input[type=text],input[type=url],input[type=password],select,textarea{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:7px;font:inherit;background:#fff}
 input:disabled,select:disabled{background:#f2f2f4;color:var(--muted)}
 button{font:inherit;padding:8px 14px;border-radius:7px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
+a.button{display:inline-block;text-decoration:none;font:inherit;padding:8px 14px;border-radius:7px;border:1px solid var(--accent);background:var(--accent);color:#fff}
 button.secondary{background:#fff;color:var(--accent)}button.danger{background:#fff;border-color:var(--bad);color:var(--bad)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:6px 4px;border-bottom:1px solid var(--line);vertical-align:top}
@@ -68,6 +71,7 @@ form.inline{display:inline}
 
 {{define "login"}}{{template "head" .}}
 <h1>MCP gateway</h1>{{template "msgs" .}}
+{{if .OIDCLabel}}<div class="card"><p><a class="button" href="/admin/oidc/login">Log in with {{.OIDCLabel}}</a></p></div>{{end}}
 <div class="card"><form method="post" action="/admin/login">
 <label>Admin password</label><input type="password" name="password" autocomplete="current-password" autofocus required>
 <p><button>Log in</button></p></form></div>
@@ -87,6 +91,8 @@ form.inline{display:inline}
 <form method="post" action="/oauth/authorize">
 <input type="hidden" name="req" value="{{.ReqID}}">
 {{if .LoggedIn}}<input type="hidden" name="csrf" value="{{.CSRF}}">{{else}}
+{{if .OIDCLabel}}<p><a class="button" href="/admin/oidc/login?req={{.ReqID}}">Log in with {{.OIDCLabel}}</a></p>
+<p class="help">or use the admin password:</p>{{end}}
 <label>Admin password</label><input type="password" name="password" autocomplete="current-password" autofocus required>{{end}}
 <p class="row"><button name="action" value="allow">Allow</button>
 <button class="secondary" name="action" value="deny" formnovalidate>Deny</button></p>
@@ -133,8 +139,9 @@ form.inline{display:inline}
 <select name="ttl" style="flex:1"><option value="">Never expires</option><option value="720h">30 days</option><option value="2160h">90 days</option></select>
 <button class="secondary">Create token</button></div></form></div>
 
-<div class="card"><h2>Admin password</h2>
-<p class="help">Set with <code>ADMIN_PASSWORD</code> (at least 40 characters), or generated on first start and printed in the gateway log.</p></div>
+<div class="card"><h2>Admin login</h2>
+<p class="help">Admin password: set with <code>ADMIN_PASSWORD</code> (at least 40 characters), or generated on first start and retrieved with <code>-print-admin-password</code>.</p>
+<p class="help">{{if .OIDCLabel}}Login with <b>{{.OIDCLabel}}</b> is also enabled.{{else}}Login with an OpenID Connect provider is off; set <code>OIDC_ISSUER</code> to enable it.{{end}}</p></div>
 {{template "foot"}}{{end}}
 
 {{define "upstream"}}{{template "head" .}}
@@ -173,7 +180,7 @@ func (g *gateway) render(w http.ResponseWriter, name string, p page) {
 }
 
 func (g *gateway) renderLogin(w http.ResponseWriter, r *http.Request, msg string) {
-	g.render(w, "login", page{Title: "Log in", Error: msg})
+	g.render(w, "login", page{Title: "Log in", Error: msg, OIDCLabel: g.oidcLabel()})
 }
 
 func (g *gateway) renderError(w http.ResponseWriter, title, msg string) {
@@ -186,9 +193,16 @@ func (g *gateway) renderError(w http.ResponseWriter, title, msg string) {
 }
 
 func (g *gateway) renderConsent(w http.ResponseWriter, r *http.Request, id string, p *pendingAuth, errMsg string) {
-	pg := page{Title: "Allow access", Error: errMsg, ReqID: id, ClientName: p.ClientName, ClientID: p.ClientID, Redirect: p.RedirectURI, Resource: p.Resource}
+	pg := page{Title: "Allow access", Error: errMsg, ReqID: id, ClientName: p.ClientName, ClientID: p.ClientID, Redirect: p.RedirectURI, Resource: p.Resource, OIDCLabel: g.oidcLabel()}
 	if s := g.currentSession(r); s != nil {
 		pg.LoggedIn, pg.CSRF = true, s.CSRF
 	}
 	g.render(w, "consent", pg)
+}
+
+func (g *gateway) oidcLabel() string {
+	if g.oidc == nil {
+		return ""
+	}
+	return g.oidc.cfg.Label
 }

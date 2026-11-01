@@ -110,7 +110,7 @@ type clientRow struct {
 }
 
 func (g *gateway) renderDashboard(w http.ResponseWriter, r *http.Request, s *session, msg, errMsg string) {
-	p := page{Title: "Overview", CSRF: s.CSRF, Message: msg, Error: errMsg, Base: g.base(r)}
+	p := page{Title: "Overview", CSRF: s.CSRF, Message: msg, Error: errMsg, Base: g.base(r), OIDCLabel: g.oidcLabel()}
 	ctx, cancel := context.WithTimeout(r.Context(), 4*time.Second)
 	defer cancel()
 	type res struct {
