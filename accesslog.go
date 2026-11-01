@@ -1,12 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -138,31 +138,31 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 		}
 		debug := mcp && g.log.Enabled(r.Context(), slog.LevelDebug)
 		rpc, requestBody := "", ""
+		var captured *requestCapture
 		if mcp && r.Body != nil {
-			original := r.Body
-			body, _ := io.ReadAll(io.LimitReader(original, logBodyLimit+1))
-			// Replay the prefix and preserve the remainder, including Close propagation.
-			r.Body = struct {
-				io.Reader
-				io.Closer
-			}{io.MultiReader(bytes.NewReader(body), original), original}
-			if debug {
-				requestBody = loggedBody(body)
-			}
+			captured = &requestCapture{ReadCloser: r.Body}
+			r.Body = captured
+		}
+
+		sw := &statusWriter{ResponseWriter: w, capture: debug}
+		span := trace.SpanFromContext(r.Context())
+		start := time.Now()
+		next.ServeHTTP(sw, r)
+		if captured != nil {
+			body := captured.snapshot()
 			var m struct {
 				Method string `json:"method"`
 			}
 			if json.Unmarshal(body, &m) == nil {
 				rpc = m.Method
 			}
+			if debug {
+				requestBody = loggedBody(body)
+			}
 		}
-		sw := &statusWriter{ResponseWriter: w, capture: debug}
-		span := trace.SpanFromContext(r.Context())
 		if rpc != "" {
 			span.SetAttributes(attribute.String("rpc.system.name", "jsonrpc"), attribute.String("rpc.method", rpc))
 		}
-		start := time.Now()
-		next.ServeHTTP(sw, r)
 		if sw.code == 0 {
 			sw.code = http.StatusOK
 		}
@@ -177,4 +177,31 @@ func (g *gateway) accessLog(next http.Handler) http.Handler {
 			g.log.DebugContext(r.Context(), "mcp bodies", attrs...)
 		}
 	})
+}
+
+// Observe only bytes read by the authenticated handler; logging never consumes
+// a request body itself. Keep the original stream and Close semantics intact.
+type requestCapture struct {
+	io.ReadCloser
+	mu   sync.Mutex
+	body []byte
+}
+
+func (c *requestCapture) Read(p []byte) (int, error) {
+	n, err := c.ReadCloser.Read(p)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.body) < logBodyLimit+1 {
+		take := min(n, logBodyLimit+1-len(c.body))
+		c.body = append(c.body, p[:take]...)
+	}
+	return n, err
+}
+
+// A transport may still be reading the request after an early upstream reply.
+// Copy under the lock without waiting for a network read to finish.
+func (c *requestCapture) snapshot() []byte {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]byte(nil), c.body...)
 }

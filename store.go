@@ -21,6 +21,7 @@ type client struct {
 	Name         string    `json:"name,omitempty"`
 	RedirectURIs []string  `json:"redirect_uris"`
 	SecretHash   string    `json:"secret_hash,omitempty"`
+	Approved     bool      `json:"approved,omitempty"`
 	Manual       bool      `json:"manual,omitempty"` // made on the admin page
 	Created      time.Time `json:"created"`
 	LastUsed     time.Time `json:"last_used,omitempty"`
@@ -81,6 +82,11 @@ func (s *store) update(fn func(*persisted)) error {
 	defer s.mu.Unlock()
 	fn(&s.st)
 	now := time.Now()
+	for id, c := range s.st.Clients {
+		if unapprovedExpired(c, now) {
+			delete(s.st.Clients, id)
+		}
+	}
 	kept := s.st.Grants[:0]
 	for _, g := range s.st.Grants {
 		if g.Expires.IsZero() || g.Expires.After(now) {

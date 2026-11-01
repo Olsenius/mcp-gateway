@@ -8,8 +8,8 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -65,14 +65,15 @@ type authCode struct {
 }
 
 type gateway struct {
-	log       *slog.Logger
-	store     *store
-	publicURL string
-	adminPW   string // ADMIN_PASSWORD, or generated and kept in DATA_DIR
-	upstreams map[string]*upstream
-	order     []string
-	accessTTL time.Duration
-	refreshTT time.Duration
+	log            *slog.Logger
+	store          *store
+	publicURL      string
+	adminPW        string // ADMIN_PASSWORD, or generated and kept in DATA_DIR
+	upstreams      map[string]*upstream
+	order          []string
+	accessTTL      time.Duration
+	refreshTT      time.Duration
+	trustedProxies []netip.Prefix
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -128,7 +129,47 @@ func parseDur(key string, def time.Duration) time.Duration {
 
 func main() {
 	healthcheck := flag.Bool("healthcheck", false, "check that the server answers, for Docker HEALTHCHECK")
+	printPassword := flag.Bool("print-admin-password", false, "print the admin password explicitly")
+	rotatePassword := flag.Bool("rotate-admin-password", false, "rotate the stored admin password; restart gateway afterwards")
 	flag.Parse()
+	if *printPassword || *rotatePassword {
+		dir := env("DATA_DIR", "/data")
+		if *rotatePassword {
+			if os.Getenv("ADMIN_PASSWORD") != "" {
+				fmt.Fprintln(os.Stderr, "ADMIN_PASSWORD is set; rotate it in the deployment configuration")
+				os.Exit(2)
+			}
+			path := filepath.Join(dir, "admin-password")
+			tmp, err := os.CreateTemp(dir, ".admin-password-*")
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			name := tmp.Name()
+			defer os.Remove(name)
+			_, err = tmp.WriteString(randomToken(36) + "\n")
+			closeErr := tmp.Close()
+			if err == nil {
+				err = closeErr
+			}
+			if err == nil {
+				err = os.Rename(name, path)
+			}
+			if err != nil {
+				fmt.Fprintln(os.Stderr, err)
+				os.Exit(2)
+			}
+			fmt.Fprintln(os.Stdout, "Admin password rotated; restart the gateway to activate it.")
+			return
+		}
+		pw, _, err := adminPassword(dir)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stdout, pw)
+		return
+	}
 	if *healthcheck {
 		resp, err := http.Get("http://127.0.0.1:" + env("PORT", "8080") + "/healthz")
 		if err != nil || resp.StatusCode != http.StatusOK {
@@ -159,19 +200,25 @@ func main() {
 		log.Error("config", "err", err)
 		os.Exit(2)
 	}
+	trusted, err := parseTrustedProxies(env("TRUSTED_PROXIES", ""))
+	if err != nil {
+		log.Error("config", "err", err)
+		os.Exit(2)
+	}
 	g := &gateway{
-		log:       log,
-		store:     openStore(env("DATA_DIR", "/data"), log),
-		publicURL: strings.TrimRight(env("PUBLIC_URL", ""), "/"),
-		upstreams: ups,
-		order:     order,
-		accessTTL: parseDur("ACCESS_TOKEN_TTL", time.Hour),
-		refreshTT: parseDur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
-		sessions:  map[string]*session{},
-		tokens:    map[string]accessToken{},
-		pending:   map[string]*pendingAuth{},
-		codes:     map[string]*authCode{},
-		limiter:   newLimiter(),
+		trustedProxies: trusted,
+		log:            log,
+		store:          openStore(env("DATA_DIR", "/data"), log),
+		publicURL:      strings.TrimRight(env("PUBLIC_URL", ""), "/"),
+		upstreams:      ups,
+		order:          order,
+		accessTTL:      parseDur("ACCESS_TOKEN_TTL", time.Hour),
+		refreshTT:      parseDur("REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		sessions:       map[string]*session{},
+		tokens:         map[string]accessToken{},
+		pending:        map[string]*pendingAuth{},
+		codes:          map[string]*authCode{},
+		limiter:        newLimiter(),
 	}
 	if g.publicURL == "" {
 		log.Warn("PUBLIC_URL is not set; it is guessed from each request (set it to your public https URL)")
@@ -183,7 +230,7 @@ func main() {
 	}
 	g.adminPW = pw
 	if source != "env" {
-		log.Warn("admin password (set ADMIN_PASSWORD to choose your own; delete the file to make a new one)", "admin_password", pw, "file", source)
+		log.Info("admin password stored; use -print-admin-password to retrieve it", "file", source)
 	}
 	for _, n := range order {
 		if ups[n].Token == "" {
@@ -195,11 +242,7 @@ func main() {
 	defer stop()
 	go g.janitor(ctx)
 
-	srv := &http.Server{
-		Addr:              ":" + env("PORT", "8080"),
-		Handler:           g.routes(),
-		ReadHeaderTimeout: 10 * time.Second,
-	}
+	srv := g.httpServer()
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
@@ -325,9 +368,10 @@ func (g *gateway) janitor(ctx context.Context) {
 // ---------- login rate limiting ----------
 
 type limiter struct {
-	mu     sync.Mutex
-	perIP  map[string][]time.Time
-	global []time.Time
+	mu                 sync.Mutex
+	perIP              map[string][]time.Time
+	registrations      map[string][]time.Time
+	registrationGlobal []time.Time
 }
 
 func newLimiter() *limiter { return &limiter{perIP: map[string][]time.Time{}} }
@@ -335,7 +379,6 @@ func newLimiter() *limiter { return &limiter{perIP: map[string][]time.Time{}} }
 const (
 	limitWindow = 15 * time.Minute
 	limitPerIP  = 5
-	limitGlobal = 30
 )
 
 func prune(ts []time.Time, now time.Time) []time.Time {
@@ -354,8 +397,7 @@ func (l *limiter) blocked(ip string) bool {
 	defer l.mu.Unlock()
 	now := time.Now()
 	l.perIP[ip] = prune(l.perIP[ip], now)
-	l.global = prune(l.global, now)
-	return len(l.perIP[ip]) >= limitPerIP || len(l.global) >= limitGlobal
+	return len(l.perIP[ip]) >= limitPerIP
 }
 
 func (l *limiter) fail(ip string) {
@@ -363,19 +405,18 @@ func (l *limiter) fail(ip string) {
 	defer l.mu.Unlock()
 	now := time.Now()
 	l.perIP[ip] = append(l.perIP[ip], now)
-	l.global = append(l.global, now)
-}
-
-func clientIP(r *http.Request) string {
-	if xf := r.Header.Get("X-Forwarded-For"); xf != "" {
-		ip, _, _ := strings.Cut(xf, ",")
-		return strings.TrimSpace(ip)
+	for key, ts := range l.perIP {
+		ts = prune(ts, now)
+		if len(ts) == 0 {
+			delete(l.perIP, key)
+		} else {
+			l.perIP[key] = ts
+		}
 	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
+	// Bound memory even when many independent source addresses fail.
+	if len(l.perIP) > 10000 {
+		delete(l.perIP, ip)
 	}
-	return host
 }
 
 // ---------- admin password ----------
@@ -384,7 +425,7 @@ const minAdminPassword = 40
 
 // adminPassword returns ADMIN_PASSWORD (at least 40 characters), or a
 // random password generated on first start and kept in DATA_DIR. source
-// is "env", the file path, or "memory" when DATA_DIR is not writable.
+// is "env" or the file path. An unwritable DATA_DIR fails closed.
 func adminPassword(dir string) (pw, source string, err error) {
 	if v := os.Getenv("ADMIN_PASSWORD"); v != "" {
 		if n := len([]rune(v)); n < minAdminPassword {
@@ -406,20 +447,30 @@ func adminPassword(dir string) (pw, source string, err error) {
 			}
 		}
 	}
-	return randomToken(36), "memory", nil
+	return "", "", fmt.Errorf("cannot persist admin password in DATA_DIR; set ADMIN_PASSWORD or use a writable DATA_DIR")
 }
 
 // checkAdmin verifies the admin password, with rate limiting.
 func (g *gateway) checkAdmin(r *http.Request, pw string) (ok bool, msg string) {
-	ip := clientIP(r)
+	if pw != "" && constEq(pw, g.adminPW) {
+		return true, ""
+	}
+	ip := g.clientIP(r)
 	if g.limiter.blocked(ip) {
 		return false, "Too many failed attempts. Wait 15 minutes."
 	}
-	if pw == "" || !constEq(pw, g.adminPW) {
-		g.limiter.fail(ip)
-		time.Sleep(700 * time.Millisecond)
-		g.log.Warn("failed admin login", "ip", ip)
-		return false, "Wrong password."
+	g.limiter.fail(ip)
+	time.Sleep(700 * time.Millisecond)
+	g.log.Warn("failed admin login", "ip", ip)
+	return false, "Wrong password."
+}
+
+func (g *gateway) httpServer() *http.Server {
+	return &http.Server{
+		Addr:              ":" + env("PORT", "8080"),
+		Handler:           g.routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
-	return true, ""
 }

@@ -23,7 +23,7 @@ and Tailscale Funnel.
 ```sh
 cp .env.example .env      # fill in PUBLIC_URL, BIBLIOFIL_TOKEN, TS_AUTHKEY
 docker compose up -d
-docker compose logs gateway   # shows the generated admin password
+docker compose exec gateway /mcp-gateway -print-admin-password
 ```
 
 Open `https://<your-host>/admin` and log in with the admin password.
@@ -54,10 +54,11 @@ The admin page lists connected apps, and you can log out one or all of them.
 | `UPSTREAM_TOKEN` | – | Shared secret the gateway sends to the MCP servers as `Authorization: Bearer` |
 | `UPSTREAM_TOKEN_<NAME>` | – | Per-server token, overrides `UPSTREAM_TOKEN` (name upper-cased, `-` → `_`) |
 | `PUBLIC_URL` | guessed | The public https URL, e.g. `https://mcp.example.ts.net`. Set it. |
-| `ADMIN_PASSWORD` | generated | Admin password, at least 40 characters, or the gateway refuses to start. If unset, a random 48-character password is generated on first start, stored in `DATA_DIR/admin-password` and printed in the log at every start |
+| `ADMIN_PASSWORD` | generated | Admin password, at least 40 characters, or the gateway refuses to start. If unset, a random 48-character password is generated on first start, stored in `DATA_DIR/admin-password` and retrieved explicitly with `-print-admin-password` |
 | `DATA_DIR` | `/data` | Where clients, refresh tokens and the generated admin password are stored |
 | `ACCESS_TOKEN_TTL` | `1h` | Lifetime of OAuth access tokens |
 | `REFRESH_TOKEN_TTL` | `720h` | Lifetime of refresh tokens (rotated on every use) |
+| `TRUSTED_PROXIES` | unset | Comma-separated proxy CIDRs allowed to supply X-Forwarded-For; otherwise the socket peer is used |
 | `PORT` | `8080` | |
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn` or `error`; invalid values stop startup |
 | `OTEL_SERVICE_NAME` | `mcp-gateway` | Service name in traces |
@@ -123,13 +124,13 @@ See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configap
 - OAuth 2.1 with PKCE (S256 only), dynamic client registration (RFC 7591), client ID metadata documents,
   protected resource metadata (RFC 9728) and resource indicators (RFC 8707). Tokens are bound to one MCP server.
 - Every new app must be approved with the admin password on a consent page that shows where it will be sent.
-- Failed logins are rate limited (5 per IP and 30 in total per 15 minutes).
+- Failed logins are rate limited (5 per IP per 15 minutes). Correct credentials remain usable even after failed attempts.
 - Tokens and client secrets are stored only as SHA-256 hashes.
-- The admin password has at least 40 characters. To change a generated one, delete `DATA_DIR/admin-password`
-  and restart, or set `ADMIN_PASSWORD`.
+- The admin password has at least 40 characters. To change a generated one, run
+  `-rotate-admin-password` and restart, or set `ADMIN_PASSWORD`.
 - The gateway replaces the client's token with the upstream token, so MCP servers never see OAuth tokens.
 - Anyone who can reach the gateway can try to log in, which is why short passwords are refused.
-- The generated password is printed in the container log. Anyone who can read the log can log in.
+- The generated password is never logged. Use `docker compose exec gateway /mcp-gateway -print-admin-password` to retrieve it through an authorized terminal.
 
 ## Development
 
@@ -188,3 +189,25 @@ requests, so both services appear in the same trace. Other applications
 can send OTLP/HTTP traces to `http://localhost:4318` through the tunnel. Jaeger
 uses temporary in-memory storage: traces disappear when its container restarts.
 See the [Jaeger getting started guide](https://www.jaegertracing.io/docs/2.22/getting-started/).
+
+### Security limits
+
+Anonymous OAuth registration is limited to 5 attempts per source IP and 60
+globally per hour. Unapproved, unused dynamic clients expire after one hour;
+approved clients, previously used clients and manually created clients persist.
+The 200-client capacity check is atomic. Metadata fetches reject private and
+special-use addresses, including the Tailscale/CGNAT range.
+
+Request reads have a 30-second deadline. Streaming responses have no write
+deadline. Access logging observes request bytes only as handlers consume them,
+so it does not read unauthenticated MCP bodies.
+
+To rotate a generated password without printing it:
+
+```sh
+docker compose exec gateway /mcp-gateway -rotate-admin-password
+docker compose restart gateway
+```
+
+Retrieve it with `-print-admin-password` afterwards. If `ADMIN_PASSWORD` is set,
+rotate that value in your deployment configuration instead.

@@ -106,6 +106,11 @@ type registration struct {
 
 func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	cors(w)
+	if !g.limiter.allowRegistration(g.clientIP(r)) {
+		w.Header().Set("Retry-After", "3600")
+		oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "client registration rate limit reached")
+		return
+	}
 	var reg registration
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10)).Decode(&reg); err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "invalid JSON")
@@ -125,12 +130,6 @@ func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 	if len(name) > 100 {
 		name = name[:100]
 	}
-	var count int
-	g.store.read(func(p *persisted) { count = len(p.Clients) })
-	if count >= 200 {
-		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "too many registered clients; remove some on the admin page")
-		return
-	}
 	c := &client{ID: "c_" + randomToken(16), Name: name, RedirectURIs: reg.RedirectURIs, Created: time.Now()}
 	method := reg.TokenEndpointAuthMethod
 	if method == "" {
@@ -146,8 +145,24 @@ func (g *gateway) handleRegister(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_client_metadata", "unsupported token_endpoint_auth_method")
 		return
 	}
-	if err := g.store.update(func(p *persisted) { p.Clients[c.ID] = c }); err != nil {
+	full := false
+	if err := g.store.update(func(p *persisted) {
+		for id, old := range p.Clients {
+			if unapprovedExpired(old, time.Now()) {
+				delete(p.Clients, id)
+			}
+		}
+		if len(p.Clients) >= 200 {
+			full = true
+			return
+		}
+		p.Clients[c.ID] = c
+	}); err != nil {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
+	}
+	if full {
+		oauthError(w, http.StatusTooManyRequests, "temporarily_unavailable", "client registration capacity reached")
 		return
 	}
 	g.log.Info("registered OAuth client", "client_id", c.ID, "name", c.Name, "redirect", strings.Join(c.RedirectURIs, " "))
@@ -177,7 +192,7 @@ var safeHTTP = &http.Client{
 			Control: func(_, address string, _ syscall.RawConn) error {
 				host, _, _ := net.SplitHostPort(address)
 				ip := net.ParseIP(host)
-				if ip == nil || ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+				if !publicMetadataIP(ip) {
 					return errors.New("refusing to fetch from a non-public address")
 				}
 				return nil
@@ -192,7 +207,7 @@ var safeHTTP = &http.Client{
 func (g *gateway) lookupClient(ctx context.Context, id string) (*client, error) {
 	var c *client
 	g.store.read(func(p *persisted) {
-		if v, ok := p.Clients[id]; ok {
+		if v, ok := p.Clients[id]; ok && !unapprovedExpired(v, time.Now()) {
 			cp := *v
 			c = &cp
 		}
@@ -335,6 +350,14 @@ func (g *gateway) handleAuthorizePost(w http.ResponseWriter, r *http.Request) {
 		v.Set("error", "access_denied")
 		v.Set("error_description", "the user denied access")
 	} else {
+		if err := g.store.update(func(st *persisted) {
+			if c := st.Clients[p.ClientID]; c != nil {
+				c.Approved = true
+			}
+		}); err != nil {
+			g.renderError(w, "Storage error", "Could not save client approval")
+			return
+		}
 		code := randomToken(32)
 		g.mu.Lock()
 		g.codes[sha(code)] = &authCode{pendingAuth: *p}
