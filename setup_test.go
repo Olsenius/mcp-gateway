@@ -89,3 +89,47 @@ func TestSetupSessionBindingAndCSRF(t *testing.T) {
 		t.Fatalf("complete calls=%d", calls)
 	}
 }
+
+// A failed completion shows the gateway's own text for known error codes,
+// and never text from the backend, which could echo the pasted input.
+func TestSetupErrorCodes(t *testing.T) {
+	cases := []struct{ code, want string }{
+		{"authorize_url_pasted", "Du limte inn innloggingslenka"},
+		{"state_mismatch", "anna innloggingsforsøk"},
+		{"exchange_failed", "godtok ikkje koden"},
+		{"something_new", "Login failed. Check the settings and start again."},
+		{"", "Login failed. Check the settings and start again."},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			u, _ := url.Parse("http://backend.example")
+			g := &gateway{log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+				sessions:  map[string]*session{sha("cookie"): {CSRF: "csrf", Expires: time.Now().Add(time.Hour)}},
+				upstreams: map[string]*upstream{"test": {Name: "test", URL: u, Token: "internal"}}}
+			old := upstreamHTTP
+			defer func() { upstreamHTTP = old }()
+			upstreamHTTP = &http.Client{Transport: setupTransport(func(r *http.Request) (*http.Response, error) {
+				code, body := 200, `{"name":"test","setup":{"status":"login_required"}}`
+				if r.URL.Path == "/setup/complete" {
+					code, body = 400, fmt.Sprintf(`{"error":"echo sensitive-return","code":%q}`, tc.code)
+				}
+				return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}, nil
+			})}
+			g.setupAttempts.Store("test:attempt", boundSetup{"test", "csrf", time.Now().Add(time.Minute)})
+			r := httptest.NewRequest("POST", "http://gateway.example/admin/u/test/setup/complete", strings.NewReader(url.Values{"csrf": {"csrf"}, "attempt_id": {"attempt"}, "input": {"sensitive-return"}}.Encode()))
+			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "cookie"})
+			r.SetPathValue("name", "test")
+			r.SetPathValue("action", "complete")
+			w := httptest.NewRecorder()
+			g.handleSetup(w, r)
+			page := w.Body.String()
+			if !strings.Contains(page, tc.want) {
+				t.Fatalf("missing %q in page", tc.want)
+			}
+			if strings.Contains(page, "sensitive-return") {
+				t.Fatal("backend error text or pasted input shown")
+			}
+		})
+	}
+}

@@ -145,6 +145,7 @@ func (g *gateway) upstreamCall(ctx context.Context, u *upstream, method, path st
 	if resp.StatusCode >= 400 {
 		var e struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		json.Unmarshal(data, &e)
 		if e.Error == "" {
@@ -153,7 +154,7 @@ func (g *gateway) upstreamCall(ctx context.Context, u *upstream, method, path st
 		if len(e.Error) > 300 {
 			e.Error = e.Error[:300]
 		}
-		return resp.StatusCode, fmt.Errorf("HTTP %d: %s", resp.StatusCode, e.Error)
+		return resp.StatusCode, &upstreamError{Status: resp.StatusCode, Code: e.Code, Msg: e.Error}
 	}
 	return resp.StatusCode, nil
 }
@@ -165,3 +166,12 @@ func (g *gateway) alive(ctx context.Context, u *upstream) bool {
 	code, err := g.upstreamCall(ctx, u, http.MethodGet, "/healthz", nil, nil)
 	return err == nil && code == http.StatusOK
 }
+
+// upstreamError is a 4xx/5xx answer from an upstream. Code is the
+// upstream's machine-readable error code, if it sent one.
+type upstreamError struct {
+	Status    int
+	Code, Msg string
+}
+
+func (e *upstreamError) Error() string { return fmt.Sprintf("HTTP %d: %s", e.Status, e.Msg) }

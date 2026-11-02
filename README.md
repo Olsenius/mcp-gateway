@@ -251,7 +251,7 @@ All calls use the internal upstream bearer token. The browser never receives it:
 | Backend endpoint | JSON contract |
 |---|---|
 | `POST /setup/start` | Request `{}`. Response `{"attempt_id":"opaque","authorization_url":"https://login.example/authorize?...","expires_at":1893456000,"instructions":"Plain text"}` |
-| `POST /setup/complete` | Request `{"attempt_id":"opaque","input":"pasted return URL"}`. Response uses the health contract with `ok`, `status`, `checks`; optionally `tokens_saved` |
+| `POST /setup/complete` | Request `{"attempt_id":"opaque","input":"pasted return URL"}`. Response uses the health contract with `ok`, `status`, `checks`; optionally `tokens_saved`. On failure: HTTP 400 `{"error":"text","code":"…"}` |
 | `POST /setup/cancel` | Request `{"attempt_id":"opaque"}`. Idempotent response `{"ok":true}` |
 
 Gateway routes are `/admin/u/{name}/setup/{start,complete,cancel}` (POST only),
@@ -261,6 +261,12 @@ the gateway loses the browser's pending form; start login again. Starting anothe
 attempt does not overwrite state in other tabs. The backend must also enforce its
 own expiry, one-time completion and state validation. Credential updates should
 invalidate its pending attempts.
+
+The gateway never shows a backend's error text, because it could echo the pasted
+input. For these `code` values it shows its own message instead; any other code gets
+a generic one: `attempt_expired`, `paste_required`, `authorize_url_pasted` (the login
+link was pasted instead of the return URL), `provider_error`, `missing_code`,
+`state_mismatch`, `exchange_failed` and `service_unreachable`.
 
 Login links must use HTTPS without embedded credentials. They are opened by the
 browser, never fetched by the gateway. Instructions are plain escaped text. This

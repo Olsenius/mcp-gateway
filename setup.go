@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 	"strings"
@@ -22,6 +23,19 @@ type setupAttempt struct {
 type boundSetup struct {
 	Backend, CSRF string
 	Expires       time.Time
+}
+
+// setupErrorText is shown for the login error codes a backend may return.
+// Every login attempt is used up after one try, so each says to start again.
+var setupErrorText = map[string]string{
+	"attempt_expired":      "Innloggingsforsøket er gått ut eller allereie brukt. Trykk «Logg inn» og prøv på nytt.",
+	"paste_required":       "Lim inn heile app://-returadressa. Trykk «Logg inn» og prøv på nytt.",
+	"authorize_url_pasted": "Du limte inn innloggingslenka, ikkje returadressa. Trykk «Logg inn», opne lenka og logg inn. Lim så inn adressa nettlesaren prøver å opne til slutt: ho byrjar med app:// og inneheld code= og state=. Viser ikkje nettlesaren henne, finn du henne i utviklarverktøya (F12) → Network → siste connect-førespurnad → Location.",
+	"provider_error":       "Innlogginga vart avbroten hos tenesta. Trykk «Logg inn» og prøv på nytt.",
+	"missing_code":         "Returadressa manglar code=. Lim inn heile app://-adressa frå slutten av innlogginga. Trykk «Logg inn» og prøv på nytt.",
+	"state_mismatch":       "Returadressa høyrer til eit anna innloggingsforsøk. Trykk «Logg inn» og bruk lenka frå det nye forsøket.",
+	"exchange_failed":      "Tenesta godtok ikkje koden. Han kan vere brukt (t.d. av appen på mobilen) eller gått ut. Trykk «Logg inn» og lim inn adressa med ein gong.",
+	"service_unreachable":  "Fekk ikkje kontakt med tenesta. Prøv igjen om litt.",
 }
 
 func safeLoginURL(raw string) bool {
@@ -102,10 +116,17 @@ func (g *gateway) handleSetup(w http.ResponseWriter, r *http.Request) {
 	if updated, loadErr := g.loadConfig(r.Context(), u); loadErr == nil {
 		doc = updated
 	}
-	// Do not render upstream errors: they could contain pasted return data.
+	// Do not render upstream error text: it could contain pasted return
+	// data. Known error codes map to the gateway's own fixed messages.
 	if err != nil {
 		attempt = setupAttempt{}
 		errMsg = "Login failed. Check the settings and start again."
+		var ue *upstreamError
+		if errors.As(err, &ue) {
+			if text, ok := setupErrorText[ue.Code]; ok {
+				errMsg = text
+			}
+		}
 	}
 	g.render(w, "upstream", page{Title: u.Name, Upstream: u.Name, CSRF: s.CSRF, Config: doc, Setup: &attempt, Message: msg, Error: errMsg, MCPURL: strings.TrimRight(g.base(r), "/") + "/" + u.Name + "/mcp"})
 }
