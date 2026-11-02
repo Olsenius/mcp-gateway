@@ -18,17 +18,28 @@ internet ─► tunnel ─► mcp-gateway ─► your MCP servers
 
 ## Quick start (Docker Compose)
 
-The included [`docker-compose.yml`](docker-compose.yml) runs the gateway, [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp)
-and Tailscale Funnel.
+The included [`docker-compose.yml`](docker-compose.yml) runs the gateway and Tailscale Funnel
+with these MCP servers on an internal network:
+
+| Server | What it does | URL path |
+|---|---|---|
+| [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp) | Norwegian public libraries: loans, renewals, reservations | `/bibliofil/mcp` |
+| [vigilo-connector](https://github.com/Olsenius/vigilo-connector) | Vigilo for parents: messages, timetable, absences | `/vigilo/mcp` |
+| [fribo-mcp](https://github.com/Olsenius/fribo-mcp) | Fribo cabin road plowing: register stays | `/fribo/mcp` |
 
 ```sh
-cp .env.example .env      # fill in PUBLIC_URL, BIBLIOFIL_TOKEN, TS_AUTHKEY
+cp .env.example .env      # fill in PUBLIC_URL, the three *_TOKEN values and TS_AUTHKEY
 docker compose up -d
 docker compose exec gateway /mcp-gateway -print-admin-password
 ```
 
 Open `https://<your-host>/admin` and log in with the admin password.
-Then open the server's **Settings and test** page, fill in the settings, save, and press **Test**.
+Then open each server's **Settings and test** page, fill in the settings, save, and press **Test**.
+For Vigilo, log in from the same page.
+
+To leave out a server, remove its service and volume from `docker-compose.yml` and its entry from
+`UPSTREAMS`. Any MCP server with Streamable HTTP works; see [The upstream contract](#the-upstream-contract).
+For developing the servers and the gateway together, see [mcp-workspace](https://github.com/Olsenius/mcp-workspace).
 
 ## Connect an app
 
@@ -141,7 +152,8 @@ these endpoints next to `/mcp`. All except plain `/healthz` require `Authorizati
 - Use environment variable names as keys, so the same setting works both ways.
 - An empty secret in `POST /config` means "keep the current one".
 
-See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configapi.go) for an implementation.
+See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configapi.go) and
+[fribo-mcp](https://github.com/Olsenius/fribo-mcp/blob/main/configapi.go) for implementations in Go.
 
 ## Security notes
 
@@ -165,6 +177,9 @@ See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configap
 go test ./...
 docker build -t mcp-gateway .
 ```
+
+[mcp-workspace](https://github.com/Olsenius/mcp-workspace) checks out the gateway and the MCP
+servers side by side, with shared test tasks and a local Compose environment built from source.
 
 ## Logging and tracing
 
@@ -193,10 +208,10 @@ When using Compose, add any extra OTEL variables to the gateway's `environment`.
 ### Jaeger test receiver
 
 ```sh
-docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d gateway bibliofil jaeger
+docker compose -f docker-compose.yml -f compose.telemetry.yaml up -d
 ```
 
-The override configures the gateway to export to `http://jaeger:4318` at info
+The override configures the gateway and the MCP servers to export to `http://jaeger:4318` at info
 level, with `always_on` sampling so that requests are recorded even when a
 client sends an unsampled parent trace. Set `OTEL_TRACES_SAMPLER` to override
 this test policy. Jaeger accepts OTLP/HTTP on port 4318 and OTLP/gRPC on 4317. Its UI is on
@@ -210,9 +225,9 @@ Alternatively, forward the loopback ports from a remote VM to your machine:
 ssh -N -L 16686:127.0.0.1:16686 -L 4318:127.0.0.1:4318 -L 4317:127.0.0.1:4317 ubuntu@vigilo-mcp
 ```
 
-Open <http://localhost:16686> and select service `mcp-gateway` or `bibliofil-mcp`.
-Bibliofil continues the gateway trace and adds spans for tools and library HTTP
-requests, so both services appear in the same trace. Other applications
+Open <http://localhost:16686> and select service `mcp-gateway`, `bibliofil-mcp`, `vigilo-mcp`
+or `fribo-mcp`. The servers continue the gateway trace and add spans for tools and their own
+HTTP requests, so the gateway and the server appear in the same trace. Other applications
 can send OTLP/HTTP traces to `http://localhost:4318` through the tunnel. Jaeger
 uses temporary in-memory storage: traces disappear when its container restarts.
 See the [Jaeger getting started guide](https://www.jaegertracing.io/docs/2.22/getting-started/).
@@ -274,14 +289,6 @@ is a fixed set of actions, not arbitrary backend URL proxying. Upstream errors
 from these actions are hidden behind a generic failure to avoid returning pasted
 credentials. Request bodies and login links must not be logged or traced.
 
-For Vigilo, set `VIGILO_TOKEN` in `.env` and run:
-
-```sh
-docker compose -f docker-compose.yml -f compose.vigilo.yaml up -d
-```
-
-The overlay builds `../vigilo/vigilo-connector`, runs it internally and keeps
-Bibliofil available. Adjust the build path if your checkout layout differs.
-Set `PUBLIC_URL` to the gateway's public HTTPS URL; the overlay also supplies it
-as Vigilo's allowed MCP Origin. Use the backend migration guide before moving an
-existing rotating-token account. No existing Vigilo volume is imported automatically.
+Vigilo uses these login actions. The Compose file sets `PUBLIC_URL` as Vigilo's allowed MCP
+Origin. Use the [backend migration guide](https://github.com/Olsenius/vigilo-connector/blob/main/docs/remote-gateway.md)
+before moving an existing rotating-token account. No existing Vigilo volume is imported automatically.

@@ -1,5 +1,7 @@
-# MCP gateway in front of bibliofil-mcp, reachable from the internet
-# through Tailscale Funnel. Copy .env.example to .env and fill it in.
+# MCP gateway in front of bibliofil-mcp, vigilo-mcp and fribo-mcp, reachable
+# from the internet through Tailscale Funnel. Copy .env.example to .env and
+# fill it in. To leave out a server, remove its service, its volume and its
+# entry in UPSTREAMS.
 #
 #   docker compose up -d
 #   docker compose exec gateway /mcp-gateway -print-admin-password
@@ -22,8 +24,10 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
-      UPSTREAMS: bibliofil=http://bibliofil:8080
-      UPSTREAM_TOKEN_BIBLIOFIL: ${BIBLIOFIL_TOKEN}
+      UPSTREAMS: bibliofil=http://bibliofil:8080,vigilo=http://vigilo:8080,fribo=http://fribo:8080
+      UPSTREAM_TOKEN_BIBLIOFIL: ${BIBLIOFIL_TOKEN:?Set BIBLIOFIL_TOKEN}
+      UPSTREAM_TOKEN_VIGILO: ${VIGILO_TOKEN:?Set VIGILO_TOKEN}
+      UPSTREAM_TOKEN_FRIBO: ${FRIBO_TOKEN:?Set FRIBO_TOKEN}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -41,7 +45,7 @@ services:
     image: ghcr.io/olsenius/bibliofil-mcp:latest
     restart: unless-stopped
     environment:
-      MCP_AUTH_TOKEN: ${BIBLIOFIL_TOKEN}
+      MCP_AUTH_TOKEN: ${BIBLIOFIL_TOKEN:?Set BIBLIOFIL_TOKEN}
       # Optional: set here instead of on the admin page (then locked there).
       BIBLIOFIL_URL: ${BIBLIOFIL_URL:-}
       BIBLIOFIL_USER: ${BIBLIOFIL_USER:-}
@@ -51,6 +55,57 @@ services:
     volumes:
       - bibliofil-data:/data
     networks: [internal]
+
+  # Vigilo parent API (https://github.com/Olsenius/vigilo-connector). Set the
+  # client credentials and log in on the gateway's admin page. Vigilo rotates
+  # refresh tokens: only one process may hold an account's token.
+  vigilo:
+    image: ghcr.io/olsenius/vigilo-connector:latest
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${VIGILO_TOKEN:?Set VIGILO_TOKEN}
+      MCP_ALLOWED_ORIGINS: ${PUBLIC_URL}
+      DATA_DIR: /data
+      VIGILO_CONFIG_DIR: /data/vigilo
+      OTEL_SERVICE_NAME: vigilo-mcp
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+    volumes:
+      - vigilo-data:/data
+    networks: [internal]
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+
+  # Fribo cabin road plowing (https://github.com/Olsenius/fribo-mcp).
+  fribo:
+    image: ghcr.io/olsenius/fribo-mcp:latest
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${FRIBO_TOKEN:?Set FRIBO_TOKEN}
+      # Optional: set here instead of on the admin page (then locked there).
+      FRIBO_EMAIL: ${FRIBO_EMAIL:-}
+      FRIBO_PASSWORD: ${FRIBO_PASSWORD:-}
+      FRIBO_CABIN_ID: ${FRIBO_CABIN_ID:-}
+      MCP_READ_ONLY: ${FRIBO_READ_ONLY:-false}
+      OTEL_SERVICE_NAME: fribo-mcp
+      OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:-}
+      OTEL_EXPORTER_OTLP_PROTOCOL: ${OTEL_EXPORTER_OTLP_PROTOCOL:-http/protobuf}
+      OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
+      OTEL_SDK_DISABLED: ${OTEL_SDK_DISABLED:-false}
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
+    volumes:
+      - fribo-data:/data
+    networks: [internal]
+    read_only: true
+    security_opt: [no-new-privileges:true]
 
   # Public HTTPS via Tailscale Funnel. Needs an auth key from
   # https://login.tailscale.com/admin/settings/keys and Funnel enabled
@@ -82,6 +137,8 @@ services:
 volumes:
   gateway-data:
   bibliofil-data:
+  vigilo-data:
+  fribo-data:
   tailscale-state:
 
 networks:
