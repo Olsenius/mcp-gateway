@@ -26,9 +26,10 @@ with these MCP servers on an internal network:
 | [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp) | Norwegian public libraries: loans, renewals, reservations | `/bibliofil/mcp` |
 | [vigilo-connector](https://github.com/Olsenius/vigilo-connector) | Vigilo for parents: messages, timetable, absences | `/vigilo/mcp` |
 | [fribo-mcp](https://github.com/Olsenius/fribo-mcp) | Fribo cabin road plowing: register stays | `/fribo/mcp` |
+| [tibi-mcp](https://github.com/Olsenius/tibi-mcp) | Tibi e-books: search, borrow, Kindle and EPUB links | `/tibi/mcp` |
 
 ```sh
-cp .env.example .env      # fill in PUBLIC_URL, the three *_TOKEN values and TS_AUTHKEY
+cp .env.example .env      # fill in PUBLIC_URL, the four *_TOKEN values and TS_AUTHKEY
 docker compose up -d
 docker compose exec gateway /mcp-gateway -print-admin-password
 ```
@@ -152,8 +153,9 @@ these endpoints next to `/mcp`. All except plain `/healthz` require `Authorizati
 - Use environment variable names as keys, so the same setting works both ways.
 - An empty secret in `POST /config` means "keep the current one".
 
-See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configapi.go) and
-[fribo-mcp](https://github.com/Olsenius/fribo-mcp/blob/main/configapi.go) for implementations in Go.
+See [bibliofil-mcp](https://github.com/Olsenius/bibliofil-mcp/blob/main/configapi.go),
+[fribo-mcp](https://github.com/Olsenius/fribo-mcp/blob/main/configapi.go) and
+[tibi-mcp](https://github.com/Olsenius/tibi-mcp/blob/main/configapi.go) for implementations in Go.
 
 ## Security notes
 
