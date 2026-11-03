@@ -1,4 +1,4 @@
-# MCP gateway in front of bibliofil-mcp, vigilo-mcp, fribo-mcp and tibi-mcp, reachable
+# MCP gateway in front of bibliofil-mcp, vigilo-mcp, fribo-mcp, tibi-mcp and spond-mcp, reachable
 # from the internet through Tailscale Funnel. Copy .env.example to .env and
 # fill it in. To leave out a server, remove its service, its volume and its
 # entry in UPSTREAMS.
@@ -24,11 +24,12 @@ services:
       OTEL_EXPORTER_OTLP_HEADERS: ${OTEL_EXPORTER_OTLP_HEADERS:-}
       OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
-      UPSTREAMS: bibliofil=http://bibliofil:8080,vigilo=http://vigilo:8080,fribo=http://fribo:8080,tibi=http://tibi:8080
+      UPSTREAMS: bibliofil=http://bibliofil:8080,vigilo=http://vigilo:8080,fribo=http://fribo:8080,tibi=http://tibi:8080,spond=http://spond:8080
       UPSTREAM_TOKEN_BIBLIOFIL: ${BIBLIOFIL_TOKEN:?Set BIBLIOFIL_TOKEN}
       UPSTREAM_TOKEN_VIGILO: ${VIGILO_TOKEN:?Set VIGILO_TOKEN}
       UPSTREAM_TOKEN_FRIBO: ${FRIBO_TOKEN:?Set FRIBO_TOKEN}
       UPSTREAM_TOKEN_TIBI: ${TIBI_TOKEN:?Set TIBI_TOKEN}
+      UPSTREAM_TOKEN_SPOND: ${SPOND_TOKEN:?Set SPOND_TOKEN}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
       OIDC_ISSUER: ${OIDC_ISSUER:-}
       OIDC_CLIENT_ID: ${OIDC_CLIENT_ID:-}
@@ -129,6 +130,23 @@ services:
       OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-}
     volumes:
       - tibi-data:/data
+    networks: [internal]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+
+  # Spond: the kids' activities, responses and participants
+  # (https://github.com/Olsenius/spond-no-match-mcp). It has no settings page
+  # yet, so the account is set here. It keeps other families' data out of its
+  # cache and answers.
+  spond:
+    image: ghcr.io/olsenius/spond-no-match-mcp:latest
+    restart: unless-stopped
+    environment:
+      MCP_AUTH_TOKEN: ${SPOND_TOKEN:?Set SPOND_TOKEN}
+      SPOND_USERNAME: ${SPOND_USERNAME:-}
+      SPOND_PASSWORD: ${SPOND_PASSWORD:-}
+      KIDS_CONFIG: ${SPOND_KIDS_CONFIG:-}
+      MCP_READ_ONLY: ${SPOND_READ_ONLY:-false}
     networks: [internal]
     read_only: true
     security_opt: [no-new-privileges:true]

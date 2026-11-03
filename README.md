@@ -27,9 +27,10 @@ with these MCP servers on an internal network:
 | [vigilo-connector](https://github.com/Olsenius/vigilo-connector) | Vigilo for parents: messages, timetable, absences | `/vigilo/mcp` |
 | [fribo-mcp](https://github.com/Olsenius/fribo-mcp) | Fribo cabin road plowing: register stays | `/fribo/mcp` |
 | [tibi-mcp](https://github.com/Olsenius/tibi-mcp) | Tibi e-books: search, borrow, Kindle and EPUB links | `/tibi/mcp` |
+| [spond-no-match-mcp](https://github.com/Olsenius/spond-no-match-mcp) | Spond: the kids' activities, responses and participants | `/spond/mcp` |
 
 ```sh
-cp .env.example .env      # fill in PUBLIC_URL, the four *_TOKEN values and TS_AUTHKEY
+cp .env.example .env      # fill in PUBLIC_URL, the five *_TOKEN values and TS_AUTHKEY
 docker compose up -d
 docker compose exec gateway /mcp-gateway -print-admin-password
 ```
