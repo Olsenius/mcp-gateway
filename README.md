@@ -27,6 +27,7 @@ with these MCP servers on an internal network:
 | [vigilo-connector](https://github.com/Olsenius/vigilo-connector) | Vigilo for parents: messages, timetable, absences | `/vigilo/mcp` |
 | [fribo-mcp](https://github.com/Olsenius/fribo-mcp) | Fribo cabin road plowing: register stays | `/fribo/mcp` |
 | [tibi-mcp](https://github.com/Olsenius/tibi-mcp) | Tibi e-books: search, borrow, Kindle and EPUB links | `/tibi/mcp` |
+| [memory-mcp](https://github.com/Olsenius/memory-mcp) | Shared agent memory: recall and record knowledge in the vault | `/memory/mcp` |
 | [spond-no-match-mcp](https://github.com/Olsenius/spond-no-match-mcp) | Spond: the kids' activities, responses and participants | `/spond/mcp` |
 
 ```sh
